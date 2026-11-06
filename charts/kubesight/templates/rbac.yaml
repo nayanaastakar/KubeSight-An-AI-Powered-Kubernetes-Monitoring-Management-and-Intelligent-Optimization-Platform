@@ -1,0 +1,25 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kubesight.fullname" . }}
+  labels:
+    {{- include "kubesight.labels" . | nindent 4 }}
+rules:
+  {{- toYaml .Values.rbac.clusterRole.rules | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kubesight.fullname" . }}
+  labels:
+    {{- include "kubesight.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kubesight.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kubesight.serviceAccountName" . }}
+    namespace: {{ .Values.namespace }}
+{{- end }}

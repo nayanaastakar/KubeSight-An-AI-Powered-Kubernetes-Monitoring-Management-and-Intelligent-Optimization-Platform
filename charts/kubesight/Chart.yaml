@@ -1,0 +1,19 @@
+apiVersion: v2
+name: kubesight
+description: A Helm chart for KubeSight - AI-Powered Kubernetes Management Platform
+type: application
+version: 1.4.0
+appVersion: "1.4.0"
+keywords:
+  - kubernetes
+  - dashboard
+  - devops
+  - monitoring
+  - security
+home: https://github.com/kubesight-ai/kubesight
+sources:
+  - https://github.com/kubesight-ai/kubesight
+maintainers:
+  - name: Gaurav Tayade
+    url: https://github.com/gauravtayade11
+icon: https://raw.githubusercontent.com/kubesight-ai/kubesight/main/docs/images/logo.png
