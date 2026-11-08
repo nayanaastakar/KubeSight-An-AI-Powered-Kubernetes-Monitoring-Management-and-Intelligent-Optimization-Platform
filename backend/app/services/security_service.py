@@ -11,6 +11,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from app.core.config import settings
 
@@ -83,7 +86,9 @@ def _find_trivy_binary() -> Optional[str]:
 def _get_k8s_client() -> client.CoreV1Api:
     """Get Kubernetes CoreV1Api client."""
     try:
-        if settings.K8S_IN_CLUSTER:
+        if os.path.exists("/tmp/kubeconfig"):
+            config.load_kube_config(config_file="/tmp/kubeconfig")
+        elif settings.K8S_IN_CLUSTER:
             config.load_incluster_config()
         elif settings.K8S_CONFIG_PATH:
             config_path = os.path.expanduser(settings.K8S_CONFIG_PATH)
@@ -91,14 +96,15 @@ def _get_k8s_client() -> client.CoreV1Api:
         else:
             config.load_kube_config()
 
-        # Override host if needed
-        if settings.K8S_HOST_OVERRIDE:
-            configuration = client.Configuration.get_default_copy()
-            if configuration.host:
-                configuration.host = configuration.host.replace("127.0.0.1", settings.K8S_HOST_OVERRIDE).replace(
-                    "localhost", settings.K8S_HOST_OVERRIDE
-                )
-                client.Configuration.set_default(configuration)
+        # Override host and disable SSL verification for Docker Desktop / internal host
+        configuration = client.Configuration.get_default_copy()
+        if settings.K8S_HOST_OVERRIDE and configuration.host:
+            configuration.host = configuration.host.replace("127.0.0.1", settings.K8S_HOST_OVERRIDE).replace(
+                "localhost", settings.K8S_HOST_OVERRIDE
+            )
+        configuration.verify_ssl = False
+        configuration.assert_hostname = False
+        client.Configuration.set_default(configuration)
 
         return client.CoreV1Api()
     except Exception as e:
@@ -1008,6 +1014,10 @@ class SecurityService:
         service_account_risks = []
         role_binding_risks = []
         recommendations = []
+        cluster_admin_count = 0
+        wildcard_count = 0
+        total_sa_count = 0
+        total_rb_count = 0
 
         try:
             core_v1 = _get_k8s_client()
@@ -1015,10 +1025,12 @@ class SecurityService:
 
             # Get all service accounts
             service_accounts = core_v1.list_service_account_for_all_namespaces()
+            total_sa_count = len(service_accounts.items)
 
             # Get all role bindings and cluster role bindings
             role_bindings = rbac_v1.list_role_binding_for_all_namespaces()
             cluster_role_bindings = rbac_v1.list_cluster_role_binding()
+            total_rb_count = len(role_bindings.items) + len(cluster_role_bindings.items)
 
             # Get all cluster roles and roles for analysis
             cluster_roles = rbac_v1.list_cluster_role()
@@ -1240,10 +1252,9 @@ class SecurityService:
             recommendations.append(f"Error during RBAC analysis: {str(e)}")
 
         result = RBACAnalysis(
-            total_service_accounts=len(service_accounts.items) if "service_accounts" in dir() else 0,
+            total_service_accounts=total_sa_count,
             risky_service_accounts=len(service_account_risks),
-            total_role_bindings=(len(role_bindings.items) if "role_bindings" in dir() else 0)
-            + (len(cluster_role_bindings.items) if "cluster_role_bindings" in dir() else 0),
+            total_role_bindings=total_rb_count,
             risky_role_bindings=len(role_binding_risks),
             cluster_admin_bindings=cluster_admin_count,
             wildcard_permissions=wildcard_count,
@@ -1267,6 +1278,12 @@ class SecurityService:
 
         namespace_policies = []
         recommendations = []
+        total_pods = 0
+        covered_pods = 0
+        protected_count = 0
+        partial_count = 0
+        unprotected_count = 0
+        coverage_pct = 0.0
 
         try:
             core_v1 = _get_k8s_client()
@@ -1285,12 +1302,6 @@ class SecurityService:
                 if ns not in policies_by_ns:
                     policies_by_ns[ns] = []
                 policies_by_ns[ns].append(policy)
-
-            total_pods = 0
-            covered_pods = 0
-            protected_count = 0
-            partial_count = 0
-            unprotected_count = 0
 
             for ns in namespaces.items:
                 ns_name = ns.metadata.name
